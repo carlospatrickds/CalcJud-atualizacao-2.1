@@ -364,6 +364,13 @@
                 padding-top: 15px;
             }
         }
+
+        #infoMajoracao {
+            white-space: pre-wrap;
+        }
+        #sucumbenciaDetalhesExtra .card-row.sub {
+            font-size: 0.9em;
+        }
     </style>
 </head>
 <body>
@@ -463,6 +470,20 @@
             <label>Data Limite para Base da Sucumbência (Súmula 111 STJ)</label>
             <input type="date" id="dataLimiteSucumbencia" onchange="calcularSeNecessario()">
             <small style="color: var(--text-muted); font-size: 0.8em; margin-top: 4px;">Se preenchido, a sucumbência considerará apenas competências até esta data.</small>
+        </div>
+
+        <!-- Checkbox para incluir Guia 5 na base da sucumbência -->
+        <div id="boxGuia5Sucumb" class="hidden" style="margin-top: 10px; padding: 10px; background: var(--salmon-soft); border-radius: 4px; border: 1px solid var(--border-accent);">
+            <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                <div class="checkbox-group" style="margin-bottom: 0; background: transparent; border: none; padding: 0;">
+                    <input type="checkbox" id="chkSucumbenciaIncluiGuia5" onchange="calcularSeNecessario()">
+                    <label for="chkSucumbenciaIncluiGuia5">Incluir valor total da Guia 5 na base dos Honorários Sucumbenciais</label>
+                </div>
+                <span style="font-size: 0.85em; color: var(--text-secondary);">
+                    Saldo atual da Guia 5: <strong id="saldoGuia5Exibido">R$ 0,00</strong>
+                </span>
+            </div>
+            <small style="color: var(--text-muted); font-size: 0.75em;">O valor considerado é o saldo líquido (Somar - Abater) dos lançamentos da aba 5, utilizando o Valor Final (inclui juros).</small>
         </div>
 
         <div id="boxMajoracao" class="hidden" style="background: var(--salmon-soft); padding: 15px; border-radius: 6px; margin-bottom: 15px;">
@@ -604,6 +625,7 @@
                     <div class="card-row sub"><span>├ Principal Corrigido</span> <span id="resSucPrin">R$ 0,00</span></div>
                     <div class="card-row sub"><span>├ Juros de Mora</span> <span id="resSucJur">R$ 0,00</span></div>
                     <div class="card-row sub"><span>└ SELIC</span> <span id="resSucSel">R$ 0,00</span></div>
+                    <div id="sucumbenciaDetalhesExtra"></div>
                     <div class="card-row card-total"><span>= Total Sucumbência</span> <span id="resSucTot">R$ 0,00</span></div>
                 </div>
 
@@ -761,13 +783,13 @@
         </div>
     </div>
 
-    <!-- ABA 5 - OUTROS LANÇAMENTOS -->
+    <!-- ABA 5 - OUTROS LANÇAMENTOS (MODIFICADA) -->
     <div id="tab5" class="tab-content">
         <h2>Outros Lançamentos</h2>
         <p style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 15px;">
             Adicione valores pontuais a serem somados ou abatidos do total final da conta.<br>
-            O fator de correção é calculado como (Índice Data Final / Índice Data Base), ou seja, atualiza o valor da data-base para a data-final.
-            Você pode editar o fator manualmente.
+            O fator de correção é calculado como (Índice Data Final / Índice Data Base), atualizando o valor original. 
+            Sobre o Valor Corrigido, incide um percentual de juros (específico por lançamento) para gerar o Valor Final.
         </p>
 
         <div class="form-group" style="margin-bottom: 20px;">
@@ -797,17 +819,21 @@
             </div>
         </div>
 
+        <!-- NOVA TABELA COM COLUNAS PARA JUROS -->
         <div class="table-responsive">
             <table id="tblOutrosValores">
                 <thead>
                     <tr>
-                        <th style="text-align: left;">Descrição do Lançamento</th>
+                        <th style="text-align: left;">Descrição</th>
                         <th class="center">Valor Original</th>
                         <th class="center">Data-base</th>
                         <th class="center">Data Final</th>
-                        <th class="center" style="width: 120px;">Fator Aplicado</th>
+                        <th class="center">Fator</th>
+                        <th class="center">V. Corrigido</th>
+                        <th class="center">% Juros</th>
+                        <th class="center">V. Juros</th>
                         <th class="center">Operação</th>
-                        <th>V. Corrigido</th>
+                        <th class="center">V. Final</th>
                         <th class="center">Ação</th>
                     </tr>
                 </thead>
@@ -825,7 +851,7 @@
         </div>
     </div>
 
-    <!-- ABA 6 - INFORMAÇÃO TEXTUAL (com editor aprimorado) -->
+    <!-- ABA 6 - INFORMAÇÃO TEXTUAL -->
     <div id="tab6" class="tab-content">
         <h2>Informação Textual / Parecer</h2>
         <p style="color: var(--text-secondary); font-size: 0.9em; margin-bottom: 15px;">
@@ -874,7 +900,7 @@
     let indicesEncogeMap = {};
     let honCausaCalculado = null;
 
-    // ABA 5
+    // ABA 5 - OUTROS VALORES (agora com suporte a juros)
     let outrosValores = [];
     let indicesOutrosMap = {};
 
@@ -895,11 +921,13 @@
             renderOutrosValores();
         }
         atualizarTituloOutrosCard();
+        atualizarSaldoGuia5Exibido();
     });
 
     // --- UTILS FORMATADORES ---
     const fmtMoeda = (v) => (v||0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
     const fmtIdx = (v) => (v||0).toLocaleString('pt-BR', { minimumFractionDigits: 6, maximumFractionDigits: 6 });
+    const fmtPerc = (v) => (v||0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
     
     const parseNum = (s) => {
         if (typeof s === 'number') return s;
@@ -1006,6 +1034,9 @@
                 renderOutrosValores();
             }
         }
+        if (tabId === 'tab1') {
+            atualizarSaldoGuia5Exibido();
+        }
     }
 
     function toggleNotas() {
@@ -1074,11 +1105,14 @@
     function toggleHonSucumbenciais() {
         const chk = document.getElementById('chkHonSucumbenciais').checked;
         const card = document.getElementById('cardSucumbencia');
+        const boxGuia5 = document.getElementById('boxGuia5Sucumb');
         if (chk) {
             card.classList.remove('hidden');
+            boxGuia5.classList.remove('hidden');
             toggleMajoração();
         } else {
             card.classList.add('hidden');
+            boxGuia5.classList.add('hidden');
             document.getElementById('boxMajoracao').classList.add('hidden');
         }
         calcularSeNecessario();
@@ -1088,6 +1122,7 @@
         if (!document.getElementById('resultadoTela').classList.contains('hidden')) {
             calcularAtualizacao();
         }
+        atualizarSaldoGuia5Exibido();
     }
 
     function atualizarInclusaoOutros() {
@@ -1104,7 +1139,18 @@
         document.getElementById('outrosCardSubtotalLabel').innerText = '= ' + subtitulo;
     }
 
-    // --- EDITOR DE TEXTO MELHORADO ---
+    // Atualiza o saldo da Guia 5 usando o Valor Final
+    function atualizarSaldoGuia5Exibido() {
+        let saldo = 0;
+        outrosValores.forEach(l => {
+            let vFinal = l.valorFinal || l.valCorrigido || 0;
+            if (l.operacao === 'SOMAR') saldo += vFinal;
+            else saldo -= vFinal;
+        });
+        document.getElementById('saldoGuia5Exibido').innerText = fmtMoeda(saldo);
+    }
+
+    // --- EDITOR DE TEXTO ---
     function formatarTexto(comando, cor) {
         let textarea = document.getElementById('textoLivre');
         let start = textarea.selectionStart;
@@ -1163,7 +1209,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         alterarFonte();
     }
 
-    // --- FUNÇÕES DE LANÇAMENTOS ---
+    // --- FUNÇÕES DE LANÇAMENTOS (CÁLCULO PRINCIPAL) ---
     function toggleEditMode() {
         editMode = !editMode;
         const btn = document.getElementById('btnEditMode');
@@ -1314,7 +1360,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         calcularSeNecessario();
     }
 
-    // --- ABA 5 - OUTROS VALORES ---
+    // --- ABA 5 - OUTROS VALORES (com juros) ---
     function addOutroValor() {
         outrosValores.push({
             descricao: '',
@@ -1323,7 +1369,10 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             dataFinal: '',
             operacao: 'SOMAR',
             fatorAplicado: 1.0,
-            valCorrigido: 0 
+            valCorrigido: 0,
+            percentualJuros: 0,
+            valorJuros: 0,
+            valorFinal: 0
         });
         renderOutrosValores();
     }
@@ -1338,11 +1387,16 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         renderOutrosValores();
     }
 
+    function atualizaJurosOutro(idx, input) {
+        let val = parseNum(input.value);
+        outrosValores[idx].percentualJuros = val;
+        renderOutrosValores();
+    }
+
     function atualizaFatorOutro(idx, input) {
         let val = parseNum(input.value);
         if (val > 0) {
             outrosValores[idx].fatorAplicado = val;
-            outrosValores[idx].valCorrigido = outrosValores[idx].valorOriginal * val;
             renderOutrosValores();
         }
     }
@@ -1366,7 +1420,15 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             if (l.fatorAplicado === 0 || l.fatorAplicado === undefined) {
                 l.fatorAplicado = fatorCalculado;
             }
-            l.valCorrigido = l.valorOriginal * l.fatorAplicado;
+
+            let valCorrigido = l.valorOriginal * l.fatorAplicado;
+            l.valCorrigido = valCorrigido;
+
+            let percJuros = l.percentualJuros || 0;
+            let valJuros = valCorrigido * (percJuros / 100);
+            let valFinal = valCorrigido + valJuros;
+            l.valorJuros = valJuros;
+            l.valorFinal = valFinal;
 
             html += `
                 <tr>
@@ -1377,13 +1439,18 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
                     <td class="center">
                         <input type="text" class="input-tbl" style="width:100px; text-align:center;" value="${fmtIdx(l.fatorAplicado)}" onblur="atualizaFatorOutro(${i}, this)">
                     </td>
+                    <td style="font-weight:bold; vertical-align:middle; text-align:right;">${fmtMoeda(l.valCorrigido)}</td>
+                    <td class="center">
+                        <input type="text" class="input-tbl" style="width:70px; text-align:center;" value="${fmtMoeda(l.percentualJuros)}" oninput="mascaraMoeda(this)" onblur="atualizaJurosOutro(${i}, this)">
+                    </td>
+                    <td style="font-weight:bold; vertical-align:middle; text-align:right;">${fmtMoeda(l.valorJuros)}</td>
                     <td class="center">
                         <select class="input-tbl" style="width:90px; text-align:center" onchange="atualizaOutroValor(${i}, 'operacao', this.value)">
                             <option value="SOMAR" ${l.operacao==='SOMAR'?'selected':''}>Somar</option>
                             <option value="ABATER" ${l.operacao==='ABATER'?'selected':''}>Abater</option>
                         </select>
                     </td>
-                    <td style="font-weight:bold; vertical-align:middle; text-align:right;">${fmtMoeda(l.valCorrigido)}</td>
+                    <td style="font-weight:bold; vertical-align:middle; text-align:right; color: var(--primary-dark);">${fmtMoeda(l.valorFinal)}</td>
                     <td class="center"><button class="btn btn-danger" style="padding:4px 8px" onclick="deleteOutroValor(${i})">X</button></td>
                 </tr>
             `;
@@ -1391,6 +1458,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         document.getElementById('bodyOutrosValores').innerHTML = html;
         calcularSeNecessario();
         atualizarTituloOutrosCard();
+        atualizarSaldoGuia5Exibido();
     }
 
     // --- CARREGAMENTO DE ÍNDICES (WEB) ---
@@ -1535,6 +1603,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         calcularSeNecessario();
     }
 
+    // --- CÁLCULO PRINCIPAL (com suporte a Outros Valores usando Valor Final) ---
     function calcularAtualizacao() {
         const body = document.getElementById('bodyCorrecao');
         const foot = document.getElementById('footCorrecao');
@@ -1625,16 +1694,25 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             </tr>
         `;
 
+        // Calcular saldo da Guia 5 usando Valor Final
+        let saldoGuia5 = 0;
+        outrosValores.forEach(l => {
+            let vFinal = l.valorFinal || l.valCorrigido || 0;
+            if (l.operacao === 'SOMAR') saldoGuia5 += vFinal;
+            else saldoGuia5 -= vFinal;
+        });
+
         let incluirOutros = document.getElementById('incluirOutrosNoPrincipal').checked;
         let tOutrosSomar = 0, tOutrosAbater = 0;
         if (incluirOutros) {
             outrosValores.forEach(l => {
-                if (l.operacao === 'SOMAR') tOutrosSomar += l.valCorrigido;
-                else tOutrosAbater += l.valCorrigido;
+                let vFinal = l.valorFinal || l.valCorrigido || 0;
+                if (l.operacao === 'SOMAR') tOutrosSomar += vFinal;
+                else tOutrosAbater += vFinal;
             });
         }
 
-        atualizarResumoFinal(tAtu, tJur, tSel, tGeral, tAtuSuc, tJurSuc, tSelSuc, tGeralSuc, tOutrosSomar, tOutrosAbater, incluirOutros);
+        atualizarResumoFinal(tAtu, tJur, tSel, tGeral, tAtuSuc, tJurSuc, tSelSuc, tGeralSuc, tOutrosSomar, tOutrosAbater, incluirOutros, saldoGuia5);
     }
 
     function atualizaFracao(idx, inputObj) {
@@ -1642,7 +1720,8 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         calcularAtualizacao();
     }
 
-    function atualizarResumoFinal(prin, jur, sel, tot, prinSuc, jurSuc, selSuc, totSuc, outrosSomar, outrosAbater, incluirOutros) {
+    // --- RESUMO FINAL (com suporte a Outros Valores e detalhamento dos lançamentos) ---
+    function atualizarResumoFinal(prin, jur, sel, tot, prinSuc, jurSuc, selSuc, totSuc, outrosSomar, outrosAbater, incluirOutros, saldoGuia5) {
         let chkContratuais = document.getElementById('chkHonContratuais').checked;
         let chkSucumbenciais = document.getElementById('chkHonSucumbenciais').checked;
         
@@ -1662,18 +1741,19 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
                 textMaj = `Majoração Multiplicativa: Base ${fmtMoeda(hs_base)}% + (${fmtMoeda(maj)}% sobre base) = ${fmtMoeda(hs_final)}%`;
             }
         }
-        document.getElementById('infoMajoracao').innerText = textMaj;
 
         let fatAut = (100 - hc) / 100;
         let fatCon = hc / 100;
         let fatSuc = hs_final / 100;
 
+        // --- Parte Autora (sempre) ---
         document.getElementById('resAutPerc').innerText = `${fmtMoeda(100 - hc)}%`;
         document.getElementById('resAutPrin').innerText = fmtMoeda(prin * fatAut);
         document.getElementById('resAutJur').innerText = fmtMoeda(jur * fatAut);
         document.getElementById('resAutSel').innerText = fmtMoeda(sel * fatAut);
         document.getElementById('resAutTot').innerText = fmtMoeda(tot * fatAut);
 
+        // --- Honorários Contratuais (condicional) ---
         if (chkContratuais) {
             document.getElementById('cardContratuais').classList.remove('hidden');
             document.getElementById('resContPerc').innerText = `${fmtMoeda(hc)}%`;
@@ -1691,17 +1771,109 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             document.getElementById('resAutTot').innerText = fmtMoeda(tot);
         }
 
+        // --- Honorários Sucumbenciais com detalhamento da Guia 5 ---
+        let incluiGuia5 = document.getElementById('chkSucumbenciaIncluiGuia5').checked;
+
         if (chkSucumbenciais && hs_final > 0) {
             document.getElementById('cardSucumbencia').classList.remove('hidden');
             document.getElementById('resSucPerc').innerText = `${fmtMoeda(hs_final)}%`;
-            document.getElementById('resSucPrin').innerText = fmtMoeda(prinSuc * fatSuc);
-            document.getElementById('resSucJur').innerText = fmtMoeda(jurSuc * fatSuc);
-            document.getElementById('resSucSel').innerText = fmtMoeda(selSuc * fatSuc);
-            document.getElementById('resSucTot').innerText = fmtMoeda(totSuc * fatSuc);
+
+            let fator = hs_final / 100;
+
+            // 1. Componentes originais (principal, juros, SELIC) – já existem
+            let valPrincipalSuc = prinSuc * fator;
+            let valJurosSuc = jurSuc * fator;
+            let valSelicSuc = selSuc * fator;
+            let totalSuc = valPrincipalSuc + valJurosSuc + valSelicSuc;
+
+            // 2. Lançamentos da Guia 5 (se incluídos)
+            let htmlExtra = '';
+            let infoTexts = [];
+            if (incluiGuia5) {
+                infoTexts.push('Lançamentos adicionais considerados:');
+                outrosValores.forEach((l, idx) => {
+                    // Ignora lançamentos vazios (valor original e final zero)
+                    if (l.valorOriginal === 0 && l.valorFinal === 0) return;
+
+                    let vCorr = l.valCorrigido || 0;
+                    let vJuros = l.valorJuros || 0;
+                    let honCorr = vCorr * fator;
+                    let honJuros = vJuros * fator;
+                    let subTotal = honCorr + honJuros;
+                    totalSuc += subTotal;
+
+                    let desc = l.descricao || 'Lançamento ' + (idx + 1);
+
+                    // Linhas no card de resumo
+                    htmlExtra += `
+                        <div class="card-row sub" style="margin-top:5px; border-top:1px dashed #ddd; padding-top:5px;">
+                            <span style="font-weight:600;">${desc}</span>
+                        </div>
+                        <div class="card-row sub" style="padding-left:30px;">
+                            <span>├ Corrigido</span> <span>${fmtMoeda(honCorr)}</span>
+                        </div>
+                        <div class="card-row sub" style="padding-left:30px;">
+                            <span>└ Juros</span> <span>${fmtMoeda(honJuros)}</span>
+                        </div>
+                    `;
+
+                    // Memória de cálculo
+                    infoTexts.push(`${desc}:`);
+                    infoTexts.push(`  - Valor Corrigido: R$ ${fmtMoeda(vCorr)}`);
+                    infoTexts.push(`  - Juros: R$ ${fmtMoeda(vJuros)}`);
+                    infoTexts.push(`  - Honorários sobre valor corrigido: R$ ${fmtMoeda(honCorr)}`);
+                    infoTexts.push(`  - Honorários sobre juros: R$ ${fmtMoeda(honJuros)}`);
+                    infoTexts.push(`  - Subtotal do lançamento: R$ ${fmtMoeda(subTotal)}`);
+                });
+
+                // Subtotal dos lançamentos adicionais (para fins de informação)
+                let totalAdicional = totalSuc - (valPrincipalSuc + valJurosSuc + valSelicSuc);
+                infoTexts.push(`Subtotal dos lançamentos adicionais: R$ ${fmtMoeda(totalAdicional)}`);
+            }
+
+            // Atualiza os valores fixos do card (Principal, Juros, SELIC)
+            document.getElementById('resSucPrin').innerText = fmtMoeda(valPrincipalSuc);
+            document.getElementById('resSucJur').innerText = fmtMoeda(valJurosSuc);
+            document.getElementById('resSucSel').innerText = fmtMoeda(valSelicSuc);
+            document.getElementById('resSucTot').innerText = fmtMoeda(totalSuc);
+
+            // Insere as linhas extras (se houver) – usando o container existente
+            let extraContainer = document.getElementById('sucumbenciaDetalhesExtra');
+            if (!extraContainer) {
+                // Cria o container após a linha do SELIC (fallback)
+                let selicRow = document.getElementById('resSucSel').closest('.card-row');
+                let parent = selicRow.parentNode;
+                let container = document.createElement('div');
+                container.id = 'sucumbenciaDetalhesExtra';
+                selicRow.after(container);
+                extraContainer = container;
+            }
+            extraContainer.innerHTML = htmlExtra;
+
+            // Monta a memória de cálculo (infoMajoracao)
+            let infoTextsFinal = [];
+            if (textMaj) infoTextsFinal.push(textMaj);
+            infoTextsFinal.push('Base original da sucumbência:');
+            infoTextsFinal.push(`  - Principal Corrigido: R$ ${fmtMoeda(prinSuc)}`);
+            infoTextsFinal.push(`  - Juros: R$ ${fmtMoeda(jurSuc)}`);
+            infoTextsFinal.push(`  - SELIC: R$ ${fmtMoeda(selSuc)}`);
+            if (incluiGuia5) {
+                infoTextsFinal.push(...infoTexts);
+            }
+            infoTextsFinal.push(`Percentual aplicado: ${fmtMoeda(hs_final)}%`);
+            infoTextsFinal.push(`TOTAL HONORÁRIOS SUCUMBENCIAIS: R$ ${fmtMoeda(totalSuc)}`);
+            document.getElementById('infoMajoracao').innerText = infoTextsFinal.join('\n');
+
         } else {
+            // Se a sucumbência não estiver habilitada ou percentual zero, oculta o card e limpa
             document.getElementById('cardSucumbencia').classList.add('hidden');
+            document.getElementById('infoMajoracao').innerText = '';
+            // Remove o container extra se existir
+            let extraContainer = document.getElementById('sucumbenciaDetalhesExtra');
+            if (extraContainer) extraContainer.innerHTML = '';
         }
 
+        // --- Card de Outros Valores (usando Valor Final) – mantido inalterado ---
         let cardOutros = document.getElementById('cardOutrosValores');
         if (incluirOutros && (outrosSomar > 0 || outrosAbater > 0)) {
             cardOutros.classList.remove('hidden');
@@ -1713,6 +1885,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             cardOutros.classList.add('hidden');
         }
 
+        // Total líquido geral – mantido
         let totalLiquido = tot;
         if (incluirOutros) {
             totalLiquido += (outrosSomar - outrosAbater);
@@ -1833,7 +2006,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         document.getElementById('resultadoHonCausa').classList.remove('hidden');
     }
 
-    // --- MOTOR DE IMPRESSÃO (PDF) COM CHECKBOXES ---
+    // --- MOTOR DE IMPRESSÃO (PDF) COM CHECKBOXES E NOVAS COLUNAS ---
     function prepararEImprimir() {
         let incluirPrincipal = document.getElementById('incluirPrincipal').checked;
         let incluirHonorarios = document.getElementById('incluirHonorarios').checked;
@@ -1863,7 +2036,6 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         let obsTexto = document.getElementById('obsCalculo').value.trim();
         let obsHtml = obsTexto ? `<div style="font-size: 11pt; margin-top: 10px;"><strong>Observações:</strong> ${obsTexto}</div>` : '';
 
-        // Texto livre com formatação e quebras de página
         let textoLivreRaw = document.getElementById('textoLivre').value.trim();
         let fontSize = document.getElementById('fontSizeSelect').value;
         let textoLivreHtml = '';
@@ -1871,7 +2043,6 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             textoLivreHtml = `<div class="print-texto-livre" style="font-size: ${fontSize}pt; line-height: 1.6; margin: 15px 0;">${textoLivreRaw.replace(/\n/g, '<br>')}</div>`;
         }
         
-        // Cabeçalho (sempre presente)
         let html = `
             <div class="print-header-box">
                 <h1>${tituloRelatorio}</h1>
@@ -1889,7 +2060,6 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             </div>
         `;
 
-        // Insere o texto livre logo após o cabeçalho (se houver)
         if (textoLivreHtml) {
             html += textoLivreHtml;
         }
@@ -1959,10 +2129,11 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             
             let chkSucumbenciais = document.getElementById('chkHonSucumbenciais').checked;
             if (chkSucumbenciais && !document.getElementById('cardSucumbencia').classList.contains('hidden')) {
+                let infoSuc = document.getElementById('infoMajoracao').innerText;
                 htmlResumo += `
                     <div class="print-card">
                         <div class="print-card-header">3. Hon. Sucumbência (${document.getElementById('resSucPerc').innerText})</div>
-                        <div style="font-size:8pt; color:#666;">${document.getElementById('infoMajoracao').innerText}</div>
+                        <div style="font-size:8pt; color:#666; white-space:pre-wrap;">${infoSuc}</div>
                         <div>Principal: ${document.getElementById('resSucPrin').innerText}</div>
                         <div>Juros Mora: ${document.getElementById('resSucJur').innerText}</div>
                         <div>SELIC: ${document.getElementById('resSucSel').innerText}</div>
@@ -1987,12 +2158,13 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             htmlResumo += `</div>`;
             html += htmlResumo;
 
+            // Detalhamento dos Outros Valores (se incluídos)
             if (incluirOutrosNoPrincipal && outrosValores.length > 0) {
                 let tituloOutros = document.getElementById('tituloOutros').value || 'Outros Valores';
-                html += `<h3 style="font-size: 12pt; color: var(--primary-dark); margin-top: 20px; border-bottom: 1px solid #ccc;">Detalhamento - ${tituloOutros} (Somar/Abater)</h3>`;
+                html += `<h3 style="font-size: 12pt; color: var(--primary-dark); margin-top: 20px; border-bottom: 1px solid #ccc;">Detalhamento - ${tituloOutros}</h3>`;
                 html += `<table style="width: 100%; border-collapse: collapse; font-size: 10pt; margin-bottom: 20px;">
                     <thead>
-                        <tr><th>Descrição</th><th class="center">V. Original</th><th class="center">Data-base</th><th class="center">Operação</th><th>V. Corrigido</th></tr>
+                        <tr><th>Descrição</th><th class="center">V. Original</th><th class="center">Data-base</th><th class="center">Data Final</th><th class="center">Fator</th><th class="center">V. Corrigido</th><th class="center">% Juros</th><th class="center">V. Juros</th><th class="center">Operação</th><th class="center">V. Final</th></tr>
                     </thead>
                     <tbody>`;
                 outrosValores.forEach(l => {
@@ -2000,8 +2172,13 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
                         <td style="text-align:left;">${l.descricao}</td>
                         <td class="center">${fmtMoeda(l.valorOriginal)}</td>
                         <td class="center">${l.dataBase}</td>
+                        <td class="center">${l.dataFinal}</td>
+                        <td class="center">${fmtIdx(l.fatorAplicado)}</td>
+                        <td class="center">${fmtMoeda(l.valCorrigido)}</td>
+                        <td class="center">${fmtMoeda(l.percentualJuros)}%</td>
+                        <td class="center">${fmtMoeda(l.valorJuros)}</td>
                         <td class="center">${l.operacao}</td>
-                        <td style="font-weight:bold;">${fmtMoeda(l.valCorrigido)}</td>
+                        <td style="font-weight:bold;">${fmtMoeda(l.valorFinal)}</td>
                     </tr>`;
                 });
                 html += `</tbody></table>`;
@@ -2075,16 +2252,16 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             `;
         }
 
-        // --- SEÇÃO OUTROS VALORES (individual) ---
+        // --- SEÇÃO OUTROS VALORES (individual) com novas colunas ---
         if (incluirOutrosPDF && outrosValores.length > 0) {
             let tituloOutros = document.getElementById('tituloOutros').value || 'OUTROS VALORES (Lançamentos Individuais)';
             let subtituloOutros = document.getElementById('subtituloOutros').value || 'SALDO TOTAL DOS OUTROS VALORES';
             html += `<div style="page-break-before: always;">
                 <h3 style="font-size: 12pt; color: var(--primary-dark);">${tituloOutros}</h3>
-                <p style="font-size: 10pt;">Valores que podem ser somados ou abatidos, com correção monetária aplicada entre a data-base e a data-final.</p>
+                <p style="font-size: 10pt;">Valores corrigidos monetariamente (fator entre data-base e data-final) e com juros específicos por lançamento.</p>
                 <table style="width: 100%; border-collapse: collapse; font-size: 10pt;">
                     <thead>
-                        <tr><th>Descrição</th><th class="center">V. Original</th><th class="center">Data-base</th><th class="center">Data Final</th><th class="center">Fator</th><th class="center">Operação</th><th>V. Corrigido</th></tr>
+                        <tr><th>Descrição</th><th class="center">V. Original</th><th class="center">Data-base</th><th class="center">Data Final</th><th class="center">Fator</th><th class="center">V. Corrigido</th><th class="center">% Juros</th><th class="center">V. Juros</th><th class="center">Operação</th><th class="center">V. Final</th></tr>
                     </thead>
                     <tbody>`;
             outrosValores.forEach(l => {
@@ -2094,15 +2271,19 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
                     <td class="center">${l.dataBase}</td>
                     <td class="center">${l.dataFinal}</td>
                     <td class="center">${fmtIdx(l.fatorAplicado)}</td>
+                    <td class="center">${fmtMoeda(l.valCorrigido)}</td>
+                    <td class="center">${fmtMoeda(l.percentualJuros)}%</td>
+                    <td class="center">${fmtMoeda(l.valorJuros)}</td>
                     <td class="center">${l.operacao}</td>
-                    <td style="font-weight:bold;">${fmtMoeda(l.valCorrigido)}</td>
+                    <td style="font-weight:bold;">${fmtMoeda(l.valorFinal)}</td>
                 </tr>`;
             });
             html += `</tbody></table>`;
             let somaOutros = 0;
             outrosValores.forEach(l => {
-                if (l.operacao === 'SOMAR') somaOutros += l.valCorrigido;
-                else somaOutros -= l.valCorrigido;
+                let vFinal = l.valorFinal || l.valCorrigido || 0;
+                if (l.operacao === 'SOMAR') somaOutros += vFinal;
+                else somaOutros -= vFinal;
             });
             html += `<div style="margin-top: 10px; font-weight: bold; text-align: right; font-size: 12pt;">${subtituloOutros}: ${fmtMoeda(somaOutros)}</div>`;
             let obsOutros = document.getElementById('obsOutrosValores').value.trim();
@@ -2117,7 +2298,6 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
             html += `<div style="margin-top: 20px; font-size: 10pt; page-break-inside: avoid;"><strong>Observações Finais:</strong><br>${obsFinais.replace(/\n/g, '<br>')}</div>`;
         }
 
-        // Rodapé com mais espaçamento
         html += `<div class="print-footer">Relatório emitido em ${hoje}.</div>`;
 
         printArea.innerHTML = html;
@@ -2139,6 +2319,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         document.title = originalTitle;
     }
 
+    // --- SALVAR JSON (com novos campos: percentualJuros, valorJuros, valorFinal) ---
     function salvarJSON() {
         let aut = document.getElementById('procAutor').value.trim();
         let proc = document.getElementById('procNumero').value.replace(/\D/g, '').substring(0, 6);
@@ -2190,7 +2371,8 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
                 tituloOutros: document.getElementById('tituloOutros').value,
                 subtituloOutros: document.getElementById('subtituloOutros').value,
                 textoLivre: document.getElementById('textoLivre').value,
-                fontSize: document.getElementById('fontSizeSelect').value
+                fontSize: document.getElementById('fontSizeSelect').value,
+                chkSucumbenciaIncluiGuia5: document.getElementById('chkSucumbenciaIncluiGuia5').checked
             },
             lancamentos: lancamentos,
             outrosValores: outrosValores,
@@ -2203,6 +2385,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         a.click();
     }
 
+    // --- CARREGAR JSON (com retrocompatibilidade) ---
     function carregarJSON(input) {
         const file = input.files[0];
         if (!file) return;
@@ -2280,9 +2463,24 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
                         document.getElementById('fontSizeSelect').value = j.meta.fontSize;
                         alterarFonte();
                     }
+                    document.getElementById('chkSucumbenciaIncluiGuia5').checked = j.meta.chkSucumbenciaIncluiGuia5 || false;
                 }
                 lancamentos = j.lancamentos || [];
                 outrosValores = j.outrosValores || [];
+
+                // Retrocompatibilidade: garantir que novos campos existam
+                outrosValores.forEach(l => {
+                    if (l.percentualJuros === undefined) l.percentualJuros = 0;
+                    if (l.valorJuros === undefined) {
+                        l.valorJuros = 0;
+                        l.valorFinal = l.valCorrigido || 0;
+                    } else {
+                        // já tem, não faz nada
+                    }
+                    if (l.valorFinal === undefined) {
+                        l.valorFinal = l.valCorrigido || 0;
+                    }
+                });
                 
                 if (j.honCausa) {
                     honCausaCalculado = j.honCausa;
@@ -2337,6 +2535,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
                     `;
                 }
                 atualizarTituloOutrosCard();
+                atualizarSaldoGuia5Exibido();
                 alert("Projeto carregado com sucesso!");
             } catch (err) {
                 alert("Erro ao ler arquivo. JSON inválido.");
@@ -2346,12 +2545,14 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         input.value = '';
     }
 
+    // --- NOVO CÁLCULO ---
     function novoCalculo() {
         if(!confirm("Apagar todos os dados atuais e iniciar novo cálculo?")) return;
         document.querySelectorAll('#appContainer input:not([type="button"]):not([type="file"]):not([type="checkbox"]), #appContainer textarea').forEach(el => el.value = '');
         
         document.getElementById('chkHonContratuais').checked = false;
         document.getElementById('chkHonSucumbenciais').checked = false;
+        document.getElementById('chkSucumbenciaIncluiGuia5').checked = false;
         
         document.getElementById('honContratuais').value = '20,00';
         document.getElementById('honSucumbencia').value = '0,00';
@@ -2388,6 +2589,7 @@ A atualização monetária foi realizada de acordo com a Tabela ENCOGE para déb
         document.getElementById('resultadoTela').classList.add('hidden');
         document.getElementById('resultadoHonCausa').classList.add('hidden');
         atualizarTituloOutrosCard();
+        atualizarSaldoGuia5Exibido();
     }
 </script>
 </body>
